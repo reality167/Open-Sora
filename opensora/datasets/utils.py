@@ -1,6 +1,6 @@
 import os
 import re
-
+import json
 import numpy as np
 import pandas as pd
 import requests
@@ -41,8 +41,22 @@ def is_url(url):
     return re.match(regex, url) is not None
 
 
+# def read_file(input_path):
+#     if input_path.endswith(".csv"):
+#         return pd.read_csv(input_path)
+#     elif input_path.endswith(".parquet"):
+#         return pd.read_parquet(input_path)
+#     else:
+#         raise NotImplementedError(f"Unsupported file format: {input_path}")
+
 def read_file(input_path):
-    if input_path.endswith(".csv"):
+    if isinstance(input_path,list):
+        samples = list()
+        for each_file in input_path:
+            with open(each_file, "r") as anno_json:
+                samples += json.load(anno_json)
+        return samples
+    elif input_path.endswith(".csv"):
         return pd.read_csv(input_path)
     elif input_path.endswith(".parquet"):
         return pd.read_parquet(input_path)

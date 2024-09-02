@@ -8,7 +8,7 @@ from torch.distributed import ProcessGroup
 from torch.distributed.distributed_c10d import _get_default_group
 from torch.utils.data import DataLoader
 
-from .datasets import BatchFeatureDataset, VariableVideoTextDataset, VideoTextDataset
+from .datasets import BatchFeatureDataset, VariableVideoTextDataset, VideoTextDataset, PhiVideoDataset
 from .sampler import BatchDistributedSampler, StatefulDistributedSampler, VariableVideoBatchSampler
 
 
@@ -101,6 +101,29 @@ def prepare_dataloader(
                 pin_memory=pin_memory,
                 num_workers=num_workers,
                 collate_fn=collate_fn_batch,
+                prefetch_factor=prefetch_factor,
+                **_kwargs,
+            ),
+            sampler,
+        )
+    elif isinstance(dataset, PhiVideoDataset):
+        process_group = process_group or _get_default_group()
+        sampler = StatefulDistributedSampler(
+            dataset,
+            num_replicas=process_group.size(),
+            rank=process_group.rank(),
+            shuffle=shuffle,
+        )
+        return (
+            DataLoader(
+                dataset,
+                batch_size=batch_size,
+                sampler=sampler,
+                worker_init_fn=get_seed_worker(seed),
+                drop_last=drop_last,
+                pin_memory=pin_memory,
+                num_workers=num_workers,
+                collate_fn=collate_fn_default,
                 prefetch_factor=prefetch_factor,
                 **_kwargs,
             ),

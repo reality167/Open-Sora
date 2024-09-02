@@ -1,9 +1,11 @@
 import os
-from glob import glob
+import glob
 
 import numpy as np
 import torch
 from PIL import ImageFile
+import pandas as pd
+import cv2
 from torchvision.datasets.folder import IMG_EXTENSIONS, pil_loader
 
 from opensora.registry import DATASETS
@@ -248,3 +250,90 @@ class BatchFeatureDataset(torch.utils.data.Dataset):
             "num_frames": batch["num_frames"],
         }
         return ret
+
+@DATASETS.register_module()
+class PhiVideoDataset(torch.utils.data.Dataset):
+    """load video according to the jspn file.
+
+    Args:
+        target_video_len (int): the number of video frames will be load.
+        align_transform (callable): Align different videos in a specified size.
+        temporal_sample (callable): Sample the target length of a video.
+    """
+
+    def __init__(
+        self,
+        data_path=None,
+        num_frames=50,
+        frame_interval=1,
+        image_size=(None, None),
+        transform_name="center",
+        undistorted=True,
+        video_fps=20,
+    ):
+        if not isinstance(data_path,list):
+            if os.path.isdir(data_path):
+                data_path = glob.glob(data_path+'/*.json')
+                data_path.sort()
+
+        data = read_file(data_path)
+        self.data = pd.DataFrame.from_dict(data)
+        self.num_frames = num_frames
+        self.frame_interval = frame_interval
+        self.image_size = image_size
+        self.transforms = {
+            "image": get_transforms_image(transform_name, image_size),
+            "video": get_transforms_video(transform_name, image_size),
+        }
+        self.undistorted = undistorted
+        self.video_fps = video_fps
+        self.transform_name = transform_name
+
+    def get_image_path(self, sample_dict, current_index):
+        img_path = sample_dict["frames"][current_index]
+        return img_path.replace('/data-preprocess','') if '/data-preprocess/' in img_path else img_path
+
+    def getitem(self, index):
+        sample = self.data.iloc[index]
+        vframes_list = []
+
+        for i in range(len(sample['frames'])):
+            img_path = self.get_image_path(sample, i)
+            if not os.path.exists(img_path):
+                continue
+
+            image = cv2.imread(img_path)
+            if image is None:
+                continue
+
+            image = torch.from_numpy(image).permute(2, 0, 1)
+            vframes_list.append(image)
+
+        if len(vframes_list) == 0:
+            raise ValueError(f"No valid frames found for index {index}")
+        
+        vframes = torch.stack(vframes_list)
+        video = temporal_random_crop(vframes, self.num_frames, self.frame_interval)
+        transform = self.transforms["video"]
+        video = transform(video)  # T C H W
+
+        # TCHW -> CTHW
+        video = video.permute(1, 0, 2, 3)
+
+        ret = {
+            "video": video,
+            "fps": self.video_fps,
+        }
+        return ret
+
+    def __getitem__(self, index):
+        for _ in range(5):
+            try:
+                return self.getitem(index)
+            except Exception as e:
+                print(f"Error fetching data at index {index}: {e}")
+                index = np.random.randint(len(self))
+        raise RuntimeError("Too many errors while fetching data.")
+
+    def __len__(self):
+        return len(self.data)
